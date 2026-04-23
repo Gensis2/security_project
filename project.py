@@ -13,7 +13,7 @@ def gate_grad_bit_rank(gate_weights, gate_grads, p):
 
     all_scores = []
 
-    for layer_idx, (weights, grads) in enumerate(tqdm(zip(gate_weights, gate_grads)), total=len(gate_weights), desc="Processing layers"):
+    for layer_idx, (weights, grads) in enumerate(tqdm(zip(gate_weights, gate_grads), total=len(gate_weights), desc="Processing layers")):
         M, N = weights.shape
         
         for i in tqdm(range(M), desc="M"):
