@@ -29,13 +29,11 @@ def gate_grad_bit_rank(gate_weights, gate_grads, p):
 
                     elif(k < sign_bits + exponent_bits):
                         bit_idx = k - sign_bits
+                        shamt = 2 ** (mantissa_bits + bit_idx)
 
                         # extract exponent field
                         w_bits = w.view(torch.uint16)
-                        exp = (w_bits >> 7) & 0xff
-
-                        # current bit value (0 or 1)
-                        bit_val = (exp >> bit_idx) & 1
+                        bit_val = (w_bits // shamt) % 2
 
                         # correct signed flip effect
                         delta_E = (1 - 2 * bit_val) * (1 << bit_idx)
@@ -45,11 +43,12 @@ def gate_grad_bit_rank(gate_weights, gate_grads, p):
                         bit_str = 'exp'
                     else:
                         bit_idx = k - sign_bits - exponent_bits
+                        shamt = 2 ** bit_idx
 
                         w_bits = w.view(torch.uint16)
                         mant = w_bits & 0x7f
 
-                        bit_val = (mant >> (6 - bit_idx)) & 1
+                        bit_val = (w_bits // (shamt) % 2)
 
                         delta_f = (1 - 2 * bit_val) * (2 ** -(bit_idx + 1))
 
