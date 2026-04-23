@@ -5,11 +5,68 @@ import torch
 import os
 
 
-def gate_bit_rank(gate_grads):
-    for grad in gate_grads:
-        M, W = grad.shape
-        num_bits = grad.element_size() * 8
-        print(M, W, num_bits)
+def gate_grad_bit_rank(gate_weights, gate_grads, p):
+    num_bits = 16
+    sign_bits = 1
+    exponent_bits = 8
+    mantissa_bits = 7
+
+    all_scores = []
+
+    for layer_idx, (weights, grads) in enumerate(zip(gate_weights, gate_grads)):
+        M, W = weights.shape
+        
+        for i in range(M):
+            for j in range(W):
+                
+                w = weights[i, j]
+                g = grads[i, j]
+
+                for k in range(num_bits):
+                    if(k < sign_bits):
+                        delta_x = -2.0 * w
+                        score = torch.abs(g * delta_x)
+                        bit_str = 'sign'
+
+                    elif(k < sign_bits + exponent_bits):
+                        bit_idx = k - sign_bits
+
+                        # extract exponent field
+                        w_bits = w.view(torch.uint16)
+                        exp = (w_bits >> 7) & 0xff
+
+                        # current bit value (0 or 1)
+                        bit_val = (exp >> bit_idx) & 1
+
+                        # correct signed flip effect
+                        delta_E = (1 - 2 * bit_val) * (1 << bit_idx)
+                        delta_x = w * (2 ** delta_E - 1)
+                        score = torch.abs(g * delta_x)
+
+                        bit_str = 'exp'
+                    else:
+                        bit_idx = k - sign_bits - exponent_bits
+
+                        w_bits = w.view(torch.uint16)
+                        mant = w_bits & 0x7f
+
+                        bit_val = (mant >> (22 - bit_idx)) & 1
+
+                        delta_f = (1 - 2 * bit_val) * (2 ** -(bit_idx + 1))
+
+                        score = torch.abs(g * w) * (2 ** -(bit_idx + 1))
+
+                    all_scores.append((
+                        score,
+                        layer_idx,
+                        i,
+                        j,
+                        bit_str,
+                        0  # bit index within field
+                    ))
+
+        all_scores.sort(key=lambda x: x[0], reverse=True)
+        return all_scores[:p]
 
 model_name = "allenai/OLMoE-1B-7B-0125"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -37,4 +94,4 @@ loss.backward()
 
 gate_grads = [gate.weight.grad for gate in gates]
 
-gate_bit_rank(gate_grads)
+gate_grad_bit_rank(gate_grads, p=10)
