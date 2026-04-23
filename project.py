@@ -18,6 +18,8 @@ def gate_grad_bit_rank(gate_weights, gate_grads, p):
     mantissa_bits = 7
 
     all_scores = []
+    min_score = 0
+
 
     for layer_idx, (weights, grads) in enumerate(tqdm(zip(gate_weights, gate_grads), total=len(gate_weights), desc="Processing layers")):
         M, N = weights.shape
@@ -58,44 +60,68 @@ def gate_grad_bit_rank(gate_weights, gate_grads, p):
 
                         score = torch.abs(g * w * delta_f)
 
-                    all_scores.append((
-                        score,
-                        layer_idx,
-                        i,
-                        j,
-                        bit_str,
-                        0  # bit index within field
-                    ))
+                    if(len(all_scores) < p):
+                        all_scores.append((
+                            score,
+                            layer_idx,
+                            i,
+                            j,
+                            bit_str,
+                            0  # bit index within field
+                        ))
+                    elif(len(all_scores) == p):
+                        all_scores.sort(key=lambda x: x[0])
+                        all_scores.append((
+                            score,
+                            layer_idx,
+                            i,
+                            j,
+                            bit_str,
+                            0
+                        ))
+                    else:
+                        if(score > all_scores[0][0]):
+                            all_scores[0] = (
+                                score,
+                                layer_idx,
+                                i,
+                                j,
+                                bit_str,
+                                0
+                            )
+                            all_scores.sort(key=lambda x: x[0])
 
-        all_scores.sort(key=lambda x: x[0], reverse=True)
-        return all_scores[:p]
+        return all_scores
 
-model_name = "allenai/OLMoE-1B-7B-0125"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", dtype=torch.bfloat16)
-model.zero_grad(set_to_none=True)
+def load_model():
+    model_name = "allenai/OLMoE-1B-7B-0125"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", dtype=torch.bfloat16)
+    model.zero_grad(set_to_none=True)
 
-dataset = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
-text = None
-for sample in dataset:
-    if sample["text"] and sample["text"].strip():
-        text = sample["text"]
-        break
-if text is None:
-    raise ValueError("No valid non-empty text found in dataset.")
+    dataset = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
+    text = None
+    for sample in dataset:
+        if sample["text"] and sample["text"].strip():
+            text = sample["text"]
+            break
+    if text is None:
+        raise ValueError("No valid non-empty text found in dataset.")
 
-inputs = tokenizer(text, return_tensors="pt").to(model.device)
+    inputs = tokenizer(text, return_tensors="pt").to(model.device)
+    return model, inputs
 
-gates = [model.model.layers[i].mlp.gate for i in range(len(model.model.layers))]
-for gate in gates:
-    gate.weight.requires_grad_(True)
+def gates_run(model, inputs):
+    gates = [model.model.layers[i].mlp.gate for i in range(len(model.model.layers))]
+    for gate in gates:
+        gate.weight.requires_grad_(True)
 
-outputs = model(**inputs, labels=inputs["input_ids"])
-loss = outputs.loss
-loss.backward()
+    outputs = model(**inputs, labels=inputs["input_ids"])
+    loss = outputs.loss
+    loss.backward()
 
-gate_weights = [gate.weight for gate in gates]
-gate_grads = [gate.weight.grad for gate in gates]
+    gate_weights = [gate.weight for gate in gates]
+    gate_grads = [gate.weight.grad for gate in gates]
 
-bit_scores = gate_grad_bit_rank(gate_weights, gate_grads, p=10)
-print(bit_scores)
+    bit_scores = gate_grad_bit_rank(gate_weights, gate_grads, p=10)
+    print(bit_scores)
