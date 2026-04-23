@@ -4,7 +4,6 @@ from datasets import load_dataset
 import torch
 import os
 
-
 def gate_grad_bit_rank(gate_weights, gate_grads, p):
     num_bits = 16
     sign_bits = 1
@@ -92,7 +91,8 @@ outputs = model(**inputs, labels=inputs["input_ids"])
 loss = outputs.loss
 loss.backward()
 
+gate_weights = [gate.weight for gate in gates]
 gate_grads = [gate.weight.grad for gate in gates]
 
-bit_scores = gate_grad_bit_rank(gate_grads, p=10)
+bit_scores = gate_grad_bit_rank(gate_weights, gate_grads, p=10)
 print(bit_scores)
