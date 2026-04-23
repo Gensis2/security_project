@@ -1,6 +1,7 @@
 import transformers
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
+from tqdm import tqdm
 import torch
 import os
 
@@ -12,11 +13,11 @@ def gate_grad_bit_rank(gate_weights, gate_grads, p):
 
     all_scores = []
 
-    for layer_idx, (weights, grads) in enumerate(zip(gate_weights, gate_grads)):
-        M, W = weights.shape
+    for layer_idx, (weights, grads) in enumerate(tqdm(zip(gate_weights, gate_grads)), total=len(gate_weights), desc="Processing layers"):
+        M, N = weights.shape
         
-        for i in range(M):
-            for j in range(W):
+        for i in tqdm(range(M), desc="M"):
+            for j in tqdm(range(N), desc="N", leave=False):
                 
                 w = weights[i, j]
                 g = grads[i, j]
