@@ -10,7 +10,7 @@
 #SBATCH --output=moe_bitflip
 
 module load python
-module load anaconda3_gpu
+module load anaconda
 module load cuda
 
 python project.py
