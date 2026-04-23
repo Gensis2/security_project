@@ -1,8 +1,11 @@
+print("Starting project script...")
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
 from tqdm import tqdm
 import torch
-import os
+
+print("Imports successful, loading model and dataset...")
 
 def gate_grad_bit_rank(gate_weights, gate_grads, p):
     num_bits = 16
@@ -66,6 +69,7 @@ def gate_grad_bit_rank(gate_weights, gate_grads, p):
 model_name = "allenai/OLMoE-1B-7B-0125"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", dtype=torch.bfloat16)
+model.zero_grad(set_to_none=True)
 
 dataset = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
 text = None
@@ -81,7 +85,6 @@ inputs = tokenizer(text, return_tensors="pt").to(model.device)
 gates = [model.model.layers[i].mlp.gate for i in range(len(model.model.layers))]
 for gate in gates:
     gate.weight.requires_grad_(True)
-    gate.weight.grad = None
 
 outputs = model(**inputs, labels=inputs["input_ids"])
 loss = outputs.loss
