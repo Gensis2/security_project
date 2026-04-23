@@ -1,8 +1,10 @@
+#!/bin/bash
+
 #SBATCH --account=bebv-delta-gpu
 #SBATCH --time=2:00:00
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=16
-#SBATCH --gres=gpu:gpuH100:1
+#SBATCH --gres=gpu:nvidia_h100_pcie:1
 #SBATCH --mem=64g
 #SBATCH --job-name=moe_bitflip
 #SBATCH --error=moe_bitflip
