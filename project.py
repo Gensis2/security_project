@@ -13,7 +13,7 @@ def gate_bit_rank(gate_grads):
 
 model_name = "allenai/OLMoE-1B-7B-0125"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
+model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", dtype=torch.bfloat16)
 
 dataset = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
 text = None
