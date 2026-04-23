@@ -1,9 +1,13 @@
 print("Starting project script...")
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
+print("Transformers imported successfully.")
 from datasets import load_dataset
+print("Datasets imported successfully.")
 from tqdm import tqdm
+print("TQDM imported successfully.")
 import torch
+print("PyTorch imported successfully.")
 
 print("Imports successful, loading model and dataset...")
 
