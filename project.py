@@ -50,11 +50,11 @@ def gate_grad_bit_rank(gate_weights, gate_grads, p):
                         w_bits = w.view(torch.uint16)
                         mant = w_bits & 0x7f
 
-                        bit_val = (mant >> (22 - bit_idx)) & 1
+                        bit_val = (mant >> (6 - bit_idx)) & 1
 
                         delta_f = (1 - 2 * bit_val) * (2 ** -(bit_idx + 1))
 
-                        score = torch.abs(g * w) * (2 ** -(bit_idx + 1))
+                        score = torch.abs(g * w * delta_f)
 
                     all_scores.append((
                         score,
