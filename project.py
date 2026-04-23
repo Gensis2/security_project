@@ -37,6 +37,4 @@ loss.backward()
 
 gate_grads = [gate.weight.grad for gate in gates]
 
-print("loss:", loss.item())
-print("gate grad shape:", gate_grads[0].shape)
-print(gate_grads[0])
+gate_bit_rank(gate_grads)
