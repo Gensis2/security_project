@@ -6,8 +6,8 @@
 #SBATCH --gres=gpu:nvidia_h100_pcie:1
 #SBATCH --mem=64g
 #SBATCH --job-name=moe_bitflip
-#SBATCH --error=moe_bitflip
-#SBATCH --output=moe_bitflip
+#SBATCH --error=moe_bitflip_error
+#SBATCH --output=moe_bitflip_output
 
 module load python
 module load anaconda
