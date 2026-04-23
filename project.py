@@ -7,8 +7,8 @@ def gate_bit_rank(gate_layers):
     pass
 
 model_name = "allenai/OLMoE-1B-7B-0125"
-tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
 
 dataset = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
 text = None
