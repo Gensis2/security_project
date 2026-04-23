@@ -5,8 +5,11 @@ import torch
 import os
 
 
-def gate_bit_rank(gate_layers):
-    pass
+def gate_bit_rank(gate_grads):
+    for grad in gate_grads:
+        M, W = grad.shape
+        num_bits = grad.element_size * 8
+        print(M, W, num_bits)
 
 model_name = "allenai/OLMoE-1B-7B-0125"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -23,17 +26,17 @@ if text is None:
 
 inputs = tokenizer(text, return_tensors="pt").to(model.device)
 
-gate = model.model.layers[0].mlp.gate
-gate.weight.requires_grad_(True)
-gate.weight.grad = None
+gates = [model.model.layers[i].mlp.gate for i in range(len(model.model.layers))]
+for gate in gates:
+    gate.weight.requires_grad_(True)
+    gate.weight.grad = None
 
 outputs = model(**inputs, labels=inputs["input_ids"])
 loss = outputs.loss
-
 loss.backward()
 
-grad = gate.weight.grad
+gate_grads = [gate.weight.grad for gate in gates]
 
 print("loss:", loss.item())
-print("gate grad shape:", grad.shape)
-print(grad)
+print("gate grad shape:", gate_grads[0].shape)
+print(gate_grads[0])
