@@ -94,4 +94,5 @@ loss.backward()
 
 gate_grads = [gate.weight.grad for gate in gates]
 
-gate_grad_bit_rank(gate_grads, p=10)
+bit_scores = gate_grad_bit_rank(gate_grads, p=10)
+print(bit_scores)
