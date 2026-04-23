@@ -8,7 +8,7 @@ import os
 def gate_bit_rank(gate_grads):
     for grad in gate_grads:
         M, W = grad.shape
-        num_bits = grad.element_size * 8
+        num_bits = grad.element_size() * 8
         print(M, W, num_bits)
 
 model_name = "allenai/OLMoE-1B-7B-0125"
