@@ -1,6 +1,7 @@
 print("Starting project script...")
 
 import os
+import csv
 import time
 
 # Disable HuggingFace telemetry and slow lookups
@@ -166,12 +167,16 @@ def _top_p_vulnerable_bits_bf16(
 
 def gate_grad_bit_rank(
     model,
+    tokenizer,
+    probe_question: str,
     inputs_list: list[dict[str, torch.Tensor]],
     gate_weights: list[torch.Tensor],
     *,
     p: int,
     n: int,
     page_size_bytes: int = 4096,
+    csv_path: str = "bitflip_metadata.csv",
+    probe_max_new_tokens: int = 80,
 ):
     """Gradient-based bit ranking (GBR) for bf16 gate weights.
 
@@ -190,6 +195,34 @@ def gate_grad_bit_rank(
     flipped_set: set[tuple[int, int, int]] = set()  # (layer_idx, flat_idx, bit_pos)
     selected_flips: list[dict] = []
     per_iter_rankings: list[list[dict]] = []
+    csv_fieldnames = [
+        "iter",
+        "layer_idx",
+        "flat_idx",
+        "bit_pos",
+        "field",
+        "field_bit",
+        "score_est",
+        "bit_before",
+        "bit_after",
+        "original_u16",
+        "flipped_u16",
+        "byte_offset",
+        "page_num",
+        "page_offset",
+        "base_loss",
+        "cand_loss",
+        "loss_after_flip",
+        "loss_before",
+        "bit_gradient",
+        "probe_question",
+        "probe_response",
+        "probe_loss_after_flip",
+    ]
+
+    with open(csv_path, "w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=csv_fieldnames)
+        writer.writeheader()
 
     if not inputs_list:
         raise ValueError("inputs_list must contain at least one sample")
@@ -307,11 +340,25 @@ def gate_grad_bit_rank(
             w_i16[best["flat_idx"]] = torch.tensor(flipped_u16, dtype=torch.uint16, device=device).view(torch.int16)
 
         iter_loss_after_flip = _eval_avg_lm_loss(model, inputs_list)
+        probe_response = _ask_model(model, tokenizer, probe_question, max_new_tokens=probe_max_new_tokens)
+        print(f"[Probe] iter={it} response: {probe_response}")
         print(
             f"[GBR] iter={it} layer={best['layer_idx']} flat_idx={best['flat_idx']} "
             f"bit_pos={best['bit_pos']} bit_gradient={best['bit_gradient']:.6f} "
             f"avg_loss_after_flip={iter_loss_after_flip:.6f}"
         )
+
+        csv_row = dict(best)
+        csv_row.update(
+            {
+                "probe_question": probe_question,
+                "probe_response": probe_response,
+                "probe_loss_after_flip": iter_loss_after_flip,
+            }
+        )
+        with open(csv_path, "a", newline="", encoding="utf-8") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=csv_fieldnames)
+            writer.writerow(csv_row)
 
         flipped_set.add((best["layer_idx"], best["flat_idx"], best["bit_pos"]))
         selected_flips.append(best)
@@ -543,7 +590,6 @@ if not texts:
     raise ValueError("No valid non-empty text found in dataset.")
 
 inputs_list = [tokenizer(t, return_tensors="pt").to(model.device) for t in texts]
-inputs_probe = inputs_list[0]
 
 gates = [model.model.layers[i].mlp.gate for i in range(len(model.model.layers))]
 for gate in gates:
@@ -553,8 +599,15 @@ initial_loss = _eval_avg_lm_loss(model, inputs_list)
 print(f"Initial average loss ({len(inputs_list)} sample(s)): {initial_loss}")
 
 gate_weights = [gate.weight for gate in gates]
-
-selected_flips, per_iter_rankings = gate_grad_bit_rank(model, inputs_list, gate_weights, p=20, n=10)
+selected_flips, per_iter_rankings = gate_grad_bit_rank(
+    model,
+    tokenizer,
+    probe_question,
+    inputs_list,
+    gate_weights,
+    p=20,
+    n=10,
+)
 
 answer_after = _ask_model(model, tokenizer, probe_question)
 print(f"[Probe] After flips: {answer_after}")
