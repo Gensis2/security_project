@@ -603,6 +603,15 @@ def gate_hess_bit_rank(
             h_ii = (g_plus - g_minus) / (2.0 * eps)
             second_order_score = (g_ij * delta_w) + (0.5 * h_ii * (delta_w ** 2))
 
+            # Debug: log first few candidates per iteration to diagnose score explosion.
+            if len(ranking) < 3:
+                print(
+                    f"  [DEBUG] cand {len(ranking)}: eps={eps:.2e} g_ij={g_ij:.6e} "
+                    f"delta_w={delta_w:.6e} g_plus={g_plus:.6e} g_minus={g_minus:.6e} "
+                    f"h_ii={h_ii:.6e} first_order={g_ij * delta_w:.6e} "
+                    f"second_order_term={0.5 * h_ii * (delta_w ** 2):.6e} total_score={second_order_score:.6e}"
+                )
+
             # Evaluate true average loss change for reporting/debugging.
             with torch.no_grad():
                 w_i16[flat_idx] = torch.tensor(flipped_u16, dtype=torch.uint16, device=device).view(torch.int16)
