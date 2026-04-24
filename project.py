@@ -195,7 +195,9 @@ def gate_grad_bit_rank(
             if cand_loss != cand_loss:  # NaN
                 cand_loss = float("inf")
 
-            loss_increase = cand_loss - base_loss
+            loss_after_flip = cand_loss
+            loss_before = base_loss
+            bit_gradient = loss_after_flip - loss_before
 
             field, field_bit = _bitpos_to_field(bit_pos)
             byte_offset = int(flat_idx) * 2
@@ -219,7 +221,9 @@ def gate_grad_bit_rank(
                 "page_offset": page_off,
                 "base_loss": float(base_loss),
                 "cand_loss": float(cand_loss),
-                "loss_increase": float(loss_increase),
+                "loss_after_flip": float(loss_after_flip),
+                "loss_before": float(loss_before),
+                "bit_gradient": float(bit_gradient),
             }
             ranking.append(item)
 
@@ -227,11 +231,11 @@ def gate_grad_bit_rank(
                 best = item
             else:
                 # Maximize loss increase.
-                if item["loss_increase"] > best["loss_increase"]:
+                if item["bit_gradient"] > best["bit_gradient"]:
                     best = item
 
-        # Sort full candidate ranking for this iteration by loss increase.
-        ranking.sort(key=lambda d: d["loss_increase"], reverse=True)
+        # Sort full candidate ranking for this iteration by finite-difference bit gradient.
+        ranking.sort(key=lambda d: d["bit_gradient"], reverse=True)
         per_iter_rankings.append(ranking)
 
         if best is None:
@@ -245,6 +249,13 @@ def gate_grad_bit_rank(
             original_i16 = int(w_i16[best["flat_idx"]].item())
             flipped_u16 = (original_i16 & 0xFFFF) ^ (1 << best["bit_pos"])
             w_i16[best["flat_idx"]] = torch.tensor(flipped_u16, dtype=torch.uint16, device=device).view(torch.int16)
+
+        iter_loss_after_flip = _eval_lm_loss(model, inputs)
+        print(
+            f"[GBR] iter={it} layer={best['layer_idx']} flat_idx={best['flat_idx']} "
+            f"bit_pos={best['bit_pos']} bit_gradient={best['bit_gradient']:.6f} "
+            f"loss_after_flip={iter_loss_after_flip:.6f}"
+        )
 
         flipped_set.add((best["layer_idx"], best["flat_idx"], best["bit_pos"]))
         selected_flips.append(best)
@@ -263,7 +274,7 @@ start_model = time.time()
 model = AutoModelForCausalLM.from_pretrained(
     model_name,
     device_map="auto",
-    torch_dtype=torch.bfloat16,
+    dtype=torch.bfloat16,
     trust_remote_code=True,
     low_cpu_mem_usage=True,
 )
