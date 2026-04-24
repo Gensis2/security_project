@@ -139,7 +139,7 @@ def gate_grad_bit_rank(model, inputs, gate_weights, gate_grads, p, n):
     return flipped_bits
 
 
-model_name = "allenai/OLMoE-1B-7B-0125"
+model_name = "allenai/Qwen/Qwen1.5-MoE-A2.7B"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", dtype=torch.bfloat16)
 model.zero_grad(set_to_none=True)
@@ -155,7 +155,7 @@ if text is None:
 
 inputs = tokenizer(text, return_tensors="pt").to(model.device)
 
-gates = [model.model.layers[i].mlp.gate for i in range(len(model.model.layers))]
+gates = [model.model.layers[i].mlp.shared_expert_gate for i in range(len(model.model.layers))]
 for gate in gates:
     gate.weight.requires_grad_(True)
 
