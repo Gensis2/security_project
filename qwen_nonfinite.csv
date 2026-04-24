@@ -1,0 +1,2 @@
+iter,layer_idx,flat_idx,bit_pos,field,field_bit,score_est,bit_before,bit_after,original_u16,flipped_u16,byte_offset,page_num,page_offset,base_loss,cand_loss,loss_after_flip,loss_before,bit_gradient,probe_question,probe_response,probe_top_tokens,probe_loss_after_flip
+9,0,16403,0,mantissa,0,nan,0,1,48326,48327,32806,8,38,nan,inf,inf,nan,nan,"In one sentence, what is the capital of France?",The capital of France is Paris.,576: The:0.1484 | 12095: Paris:0.1310 | 4710: \n\n:0.0399 | 21806: Answer:0.0352 | 3555: What:0.0352,nan

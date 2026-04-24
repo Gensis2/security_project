@@ -1,0 +1,6 @@
+Starting project script...
+Transformers imported successfully.
+Datasets imported successfully.
+TQDM imported successfully.
+PyTorch imported successfully.
+Imports successful, loading model and dataset...
