@@ -60,6 +60,21 @@ def _eval_lm_loss(model, inputs) -> float:
         return loss_val
 
 
+def _ask_model(model, tokenizer, question: str, max_new_tokens: int = 80) -> str:
+    q_inputs = tokenizer(question, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        out_ids = model.generate(
+            **q_inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+    decoded = tokenizer.decode(out_ids[0], skip_special_tokens=True)
+    if decoded.startswith(question):
+        return decoded[len(question):].strip()
+    return decoded.strip()
+
+
 def _top_p_vulnerable_bits_bf16(
     weight: torch.Tensor,
     grad: torch.Tensor,
@@ -274,12 +289,17 @@ start_model = time.time()
 model = AutoModelForCausalLM.from_pretrained(
     model_name,
     device_map="auto",
-    dtype=torch.bfloat16,
+    torch_dtype=torch.bfloat16,
     trust_remote_code=True,
     low_cpu_mem_usage=True,
 )
 print(f"Model loaded in {time.time() - start_model:.2f}s")
 model.zero_grad(set_to_none=True)
+
+probe_question = "In one sentence, what is the capital of France?"
+print(f"\n[Probe] Question: {probe_question}")
+answer_before = _ask_model(model, tokenizer, probe_question)
+print(f"[Probe] Before flips: {answer_before}")
 
 dataset = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
 text = None
@@ -303,7 +323,10 @@ print(f"Initial loss: {loss.item()}")
 
 gate_weights = [gate.weight for gate in gates]
 
-selected_flips, per_iter_rankings = gate_grad_bit_rank(model, inputs, gate_weights, p=10, n=10)
+selected_flips, per_iter_rankings = gate_grad_bit_rank(model, inputs, gate_weights, p=20, n=10)
+
+answer_after = _ask_model(model, tokenizer, probe_question)
+print(f"[Probe] After flips: {answer_after}")
 
 with torch.no_grad():
     outputs = model(**inputs, labels=inputs["input_ids"])
