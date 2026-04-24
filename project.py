@@ -120,6 +120,9 @@ def _probe_next_token_stats(model, tokenizer, question: str, top_k: int = 5) -> 
     with torch.no_grad():
         outputs = model(**q_inputs)
         next_logits = outputs.logits[:, -1, :].float().squeeze(0)
+        if not torch.isfinite(next_logits).all():
+            nonfinite = int((~torch.isfinite(next_logits)).sum().item())
+            return f"NON-FINITE NEXT-LOGITS ({nonfinite} values)"
         probs = torch.softmax(next_logits, dim=-1)
         top_probs, top_ids = torch.topk(probs, k=min(int(top_k), int(probs.numel())))
 
@@ -156,6 +159,9 @@ def _top_p_vulnerable_bits_bf16(
     *,
     layer_idx: int,
     flipped_set: set[tuple[int, int, int]],
+    blocked_pages: set[tuple[int, int]],
+    page_size_bytes: int = 4096,
+    flippable_sample_rate: float = 1.0,
 ) -> list[tuple[float, int, int, int]]:
     """Returns (score_est, layer_idx, flat_idx, bit_pos) for top-p candidates in one layer.
 
@@ -170,6 +176,8 @@ def _top_p_vulnerable_bits_bf16(
     numel = flat_w.numel()
     if numel == 0:
         return []
+    if page_size_bytes % 2 != 0:
+        raise ValueError("page_size_bytes must be divisible by 2 for bf16 weights")
 
     device = flat_w.device
     masks = _bf16_bit_masks(device)
@@ -190,6 +198,24 @@ def _top_p_vulnerable_bits_bf16(
         excluded = [bit_pos * numel + flat_idx for (li, flat_idx, bit_pos) in flipped_set if li == layer_idx]
         if excluded:
             scores_flat[torch.tensor(excluded, device=device, dtype=torch.long)] = -float("inf")
+
+    if blocked_pages:
+        values_per_page = page_size_bytes // 2
+        for li, page_num in blocked_pages:
+            if li != layer_idx:
+                continue
+            start = int(page_num) * values_per_page
+            end = min(start + values_per_page, numel)
+            if start < end:
+                scores_flat.view(16, numel)[:, start:end] = -float("inf")
+
+    if flippable_sample_rate < 1.0:
+        keep_count = max(1, min(numel, int(round(float(flippable_sample_rate) * numel))))
+        keep_flat = torch.zeros(numel, dtype=torch.bool, device=device)
+        keep_idx = torch.randperm(numel, device=device)[:keep_count]
+        keep_flat[keep_idx] = True
+        keep_mask = keep_flat.unsqueeze(0).expand(16, -1).reshape(-1)
+        scores_flat[~keep_mask] = -float("inf")
 
     k = min(int(p), int(scores_flat.numel()))
     if k <= 0:
@@ -217,6 +243,7 @@ def gate_grad_bit_rank(
     page_size_bytes: int = 4096,
     csv_path: str = "bitflip_metadata.csv",
     probe_max_new_tokens: int = 80,
+    flippable_sample_rate: float = 1.0,
 ):
     """Gradient-based bit ranking (GBR) for bf16 gate weights.
 
@@ -233,6 +260,7 @@ def gate_grad_bit_rank(
     model.eval()
 
     flipped_set: set[tuple[int, int, int]] = set()  # (layer_idx, flat_idx, bit_pos)
+    blocked_pages: set[tuple[int, int]] = set()  # (layer_idx, page_num)
     selected_flips: list[dict] = []
     per_iter_rankings: list[list[dict]] = []
     csv_fieldnames = [
@@ -291,6 +319,9 @@ def gate_grad_bit_rank(
                     int(p),
                     layer_idx=layer_idx,
                     flipped_set=flipped_set,
+                    blocked_pages=blocked_pages,
+                    page_size_bytes=page_size_bytes,
+                    flippable_sample_rate=flippable_sample_rate,
                 )
             )
 
@@ -405,6 +436,7 @@ def gate_grad_bit_rank(
             writer.writerow(csv_row)
 
         flipped_set.add((best["layer_idx"], best["flat_idx"], best["bit_pos"]))
+        blocked_pages.add((best["layer_idx"], int(best["page_num"])))
         selected_flips.append(best)
 
     return selected_flips, per_iter_rankings
@@ -423,6 +455,7 @@ def gate_hess_bit_rank(
     hessian_eps: float = 1e-3,
     csv_path: str = "bitflip_metadata_hess.csv",
     probe_max_new_tokens: int = 80,
+    flippable_sample_rate: float = 1.0,
 ):
     """Hessian-informed bit ranking for bf16 gate weights (unused helper).
 
@@ -443,6 +476,7 @@ def gate_hess_bit_rank(
 
     num_samples = len(inputs_list)
     flipped_set: set[tuple[int, int, int]] = set()  # (layer_idx, flat_idx, bit_pos)
+    blocked_pages: set[tuple[int, int]] = set()  # (layer_idx, page_num)
     selected_flips: list[dict] = []
     per_iter_rankings: list[list[dict]] = []
     csv_fieldnames = [
@@ -512,6 +546,9 @@ def gate_hess_bit_rank(
                     int(p),
                     layer_idx=layer_idx,
                     flipped_set=flipped_set,
+                    blocked_pages=blocked_pages,
+                    page_size_bytes=page_size_bytes,
+                    flippable_sample_rate=flippable_sample_rate,
                 )
             )
 
@@ -643,6 +680,7 @@ def gate_hess_bit_rank(
             writer.writerow(csv_row)
 
         flipped_set.add((best["layer_idx"], best["flat_idx"], best["bit_pos"]))
+        blocked_pages.add((best["layer_idx"], int(best["page_num"])))
         selected_flips.append(best)
 
     return selected_flips, per_iter_rankings
@@ -657,8 +695,10 @@ def run_standardized_model_workflow(
     num_grad_samples: int,
     p: int,
     n: int,
+    page_size_bytes: int = 4096,
     grad_csv_path: str = "bitflip_metadata.csv",
     hess_csv_path: str = "bitflip_metadata_hess.csv",
+    flippable_sample_rate: float = 1.0,
 ) -> None:
     model.zero_grad(set_to_none=True)
 
@@ -683,7 +723,9 @@ def run_standardized_model_workflow(
         gate_weights,
         p=p,
         n=n,
+        page_size_bytes=page_size_bytes,
         csv_path=grad_csv_path,
+        flippable_sample_rate=flippable_sample_rate,
     )
 
     answer_after = _ask_model(model, tokenizer, probe_question)
@@ -708,7 +750,9 @@ def run_standardized_model_workflow(
         gate_weights,
         p=p,
         n=n,
+        page_size_bytes=page_size_bytes,
         csv_path=hess_csv_path,
+        flippable_sample_rate=flippable_sample_rate,
     )
 
     answer_after_hess = _ask_model(model, tokenizer, probe_question)
@@ -737,6 +781,10 @@ def _run_model_workflow(model_name: str) -> None:
     print(f"Model loaded in {time.time() - start_model:.2f}s")
 
     gate_weights = [model.model.layers[i].mlp.gate.weight for i in range(len(model.model.layers))]
+    flippable_sample_rate = float(os.getenv("FLIPPABLE_SAMPLE_RATE", "1.0"))
+    if not 0.0 < flippable_sample_rate <= 1.0:
+        raise ValueError("FLIPPABLE_SAMPLE_RATE must be in the interval (0, 1].")
+
     run_standardized_model_workflow(
         model,
         tokenizer,
@@ -745,8 +793,10 @@ def _run_model_workflow(model_name: str) -> None:
         num_grad_samples=int(os.getenv("NUM_GRAD_SAMPLES", "1")),
         p=20,
         n=10,
+        page_size_bytes=4096,
         grad_csv_path="bitflip_metadata.csv",
         hess_csv_path="bitflip_metadata_hess.csv",
+        flippable_sample_rate=flippable_sample_rate,
     )
 
 
