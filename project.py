@@ -11,6 +11,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 print("Loading PyTorch...")
 start_torch = time.time()
 import torch
+import torch.nn.functional as F
 print(f"PyTorch loaded in {time.time() - start_torch:.2f}s")
 
 print("Loading tqdm...")
@@ -54,6 +55,28 @@ def _bitpos_to_field(bit_pos: int) -> tuple[str, int]:
 
 
 def _eval_lm_loss(model, inputs) -> float:
+    with torch.no_grad():
+        loss_val = _forward_lm_loss_fp32(model, inputs)
+        return float(loss_val.detach().cpu().item())
+
+
+def _forward_lm_loss_fp32(model, inputs) -> torch.Tensor:
+    """Compute CausalLM loss in float32 for numerical stability."""
+    outputs = model(**inputs)
+    logits = outputs.logits.float()
+
+    # Shift for next-token prediction (same convention as HF CausalLM heads).
+    shift_logits = logits[:, :-1, :].contiguous()
+    shift_labels = inputs["input_ids"][:, 1:].contiguous()
+
+    loss = F.cross_entropy(
+        shift_logits.view(-1, shift_logits.size(-1)),
+        shift_labels.view(-1),
+    )
+    return loss
+
+
+def _eval_lm_loss_legacy(model, inputs) -> float:
     with torch.no_grad():
         outputs = model(**inputs, labels=inputs["input_ids"])
         loss_val = float(outputs.loss.detach().cpu().item())
@@ -160,8 +183,7 @@ def gate_grad_bit_rank(
 
     for it in tqdm(range(n), desc="GBR iterations"):
         model.zero_grad(set_to_none=True)
-        outputs = model(**inputs, labels=inputs["input_ids"])
-        base_loss_t = outputs.loss
+        base_loss_t = _forward_lm_loss_fp32(model, inputs)
         base_loss = float(base_loss_t.detach().cpu().item())
         base_loss_t.backward()
 
@@ -300,7 +322,7 @@ probe_question = "In one sentence, what is the capital of France?"
 print(f"\n[Probe] Question: {probe_question}")
 answer_before = _ask_model(model, tokenizer, probe_question)
 print(f"[Probe] Before flips: {answer_before}")
-
+print("\nLoading dataset and finding a non-empty text sample...")
 dataset = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
 text = None
 for sample in dataset:
@@ -316,10 +338,8 @@ gates = [model.model.layers[i].mlp.gate for i in range(len(model.model.layers))]
 for gate in gates:
     gate.weight.requires_grad_(True)
 
-outputs = model(**inputs, labels=inputs["input_ids"])
-loss = outputs.loss
-loss.backward()
-print(f"Initial loss: {loss.item()}")
+initial_loss = _eval_lm_loss(model, inputs)
+print(f"Initial loss: {initial_loss}")
 
 gate_weights = [gate.weight for gate in gates]
 
@@ -328,9 +348,7 @@ selected_flips, per_iter_rankings = gate_grad_bit_rank(model, inputs, gate_weigh
 answer_after = _ask_model(model, tokenizer, probe_question)
 print(f"[Probe] After flips: {answer_after}")
 
-with torch.no_grad():
-    outputs = model(**inputs, labels=inputs["input_ids"])
-    loss = outputs.loss.item()
-    print(f"Final loss after bit flips: {loss}")
+final_loss = _eval_lm_loss(model, inputs)
+print(f"Final loss after bit flips: {final_loss}")
 
 print(f"Total flips applied: {len(selected_flips)}")
