@@ -1,15 +1,33 @@
 print("Starting project script...")
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
-print("Transformers imported successfully.")
-from datasets import load_dataset
-print("Datasets imported successfully.")
-from tqdm import tqdm
-print("TQDM imported successfully.")
-import torch
-print("PyTorch imported successfully.")
+import os
+import time
 
-print("Imports successful, loading model and dataset...")
+# Disable HuggingFace telemetry and slow lookups
+os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+os.environ["HF_DATASETS_DISABLE_PROGRESS_BARS"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+print("Loading PyTorch...")
+start_torch = time.time()
+import torch
+print(f"PyTorch loaded in {time.time() - start_torch:.2f}s")
+
+print("Loading tqdm...")
+from tqdm import tqdm
+print("tqdm imported successfully.")
+
+print("Loading Datasets...")
+start_ds = time.time()
+from datasets import load_dataset
+print(f"Datasets loaded in {time.time() - start_ds:.2f}s")
+
+print("Loading Transformers...")
+start_tf = time.time()
+from transformers import AutoModelForCausalLM, AutoTokenizer
+print(f"Transformers loaded in {time.time() - start_tf:.2f}s")
+
+print("\nImports successful, loading model and dataset...")
 
 _BIT_MASKS_CACHE: dict[torch.device, torch.Tensor] = {}
 
@@ -235,8 +253,21 @@ def gate_grad_bit_rank(
 
 
 model_name = "allenai/OLMoE-1B-7B-0125"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", torch_dtype=torch.bfloat16)
+print(f"\nLoading tokenizer from {model_name}...")
+start_tok = time.time()
+tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+print(f"Tokenizer loaded in {time.time() - start_tok:.2f}s")
+
+print(f"Loading model from {model_name}...")
+start_model = time.time()
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    device_map="auto",
+    torch_dtype=torch.bfloat16,
+    trust_remote_code=True,
+    low_cpu_mem_usage=True,
+)
+print(f"Model loaded in {time.time() - start_model:.2f}s")
 model.zero_grad(set_to_none=True)
 
 dataset = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
