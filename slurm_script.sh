@@ -1,9 +1,10 @@
 #!/bin/bash
 
-#SBATCH --time=2:00:00
+#SBATCH --partition=highgpu
+#SBATCH --time=8:00:00
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=16
-#SBATCH --gres=gpu:nvidia_h100_pcie:1
+#SBATCH --gres=gpu:nvidia_h100_80gb_hbm3:1
 #SBATCH --mem=64g
 #SBATCH --job-name=moe_bitflip
 #SBATCH --error=moe_bitflip_error
