@@ -109,6 +109,27 @@ def _ask_model(model, tokenizer, question: str, max_new_tokens: int = 80) -> str
     return decoded.strip()
 
 
+def _probe_next_token_stats(model, tokenizer, question: str, top_k: int = 5) -> str:
+    """Return a compact summary of the next-token distribution for a prompt.
+
+    This is a better debugging signal than decoded text alone, because the text can stay
+    the same even when logits/probabilities shift after a bit flip.
+    """
+    q_inputs = tokenizer(question, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        outputs = model(**q_inputs)
+        next_logits = outputs.logits[:, -1, :].float().squeeze(0)
+        probs = torch.softmax(next_logits, dim=-1)
+        top_probs, top_ids = torch.topk(probs, k=min(int(top_k), int(probs.numel())))
+
+    pieces = []
+    for prob, token_id in zip(top_probs.tolist(), top_ids.tolist()):
+        token_text = tokenizer.decode([token_id], skip_special_tokens=True)
+        token_text = token_text.replace("\n", "\\n")
+        pieces.append(f"{token_id}:{token_text}:{prob:.4f}")
+    return " | ".join(pieces)
+
+
 def _collect_inputs_list(tokenizer, num_samples: int, model_device: torch.device) -> list[dict[str, torch.Tensor]]:
     if num_samples < 1:
         raise ValueError("num_samples must be >= 1")
@@ -235,6 +256,7 @@ def gate_grad_bit_rank(
         "bit_gradient",
         "probe_question",
         "probe_response",
+        "probe_top_tokens",
         "probe_loss_after_flip",
     ]
 
@@ -359,7 +381,9 @@ def gate_grad_bit_rank(
 
         iter_loss_after_flip = _eval_avg_lm_loss(model, inputs_list)
         probe_response = _ask_model(model, tokenizer, probe_question, max_new_tokens=probe_max_new_tokens)
+        probe_top_tokens = _probe_next_token_stats(model, tokenizer, probe_question, top_k=5)
         print(f"[Probe] iter={it} response: {probe_response}")
+        print(f"[Probe] iter={it} top_tokens: {probe_top_tokens}")
         print(
             f"[GBR] iter={it} layer={best['layer_idx']} flat_idx={best['flat_idx']} "
             f"bit_pos={best['bit_pos']} bit_gradient={best['bit_gradient']:.6f} "
@@ -371,6 +395,7 @@ def gate_grad_bit_rank(
             {
                 "probe_question": probe_question,
                 "probe_response": probe_response,
+                "probe_top_tokens": probe_top_tokens,
                 "probe_loss_after_flip": iter_loss_after_flip,
             }
         )
@@ -443,6 +468,7 @@ def gate_hess_bit_rank(
         "second_order_score",
         "probe_question",
         "probe_response",
+        "probe_top_tokens",
         "probe_loss_after_flip",
     ]
 
@@ -593,7 +619,9 @@ def gate_hess_bit_rank(
 
         iter_loss_after_flip = _eval_avg_lm_loss(model, inputs_list)
         probe_response = _ask_model(model, tokenizer, probe_question, max_new_tokens=probe_max_new_tokens)
+        probe_top_tokens = _probe_next_token_stats(model, tokenizer, probe_question, top_k=5)
         print(f"[Probe] iter={it} response: {probe_response}")
+        print(f"[Probe] iter={it} top_tokens: {probe_top_tokens}")
         print(
             f"[HESS-GBR] iter={it} layer={best['layer_idx']} flat_idx={best['flat_idx']} "
             f"bit_pos={best['bit_pos']} hess_score={best['second_order_score']:.6f} "
@@ -605,6 +633,7 @@ def gate_hess_bit_rank(
             {
                 "probe_question": probe_question,
                 "probe_response": probe_response,
+                "probe_top_tokens": probe_top_tokens,
                 "probe_loss_after_flip": iter_loss_after_flip,
             }
         )
