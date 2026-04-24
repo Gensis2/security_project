@@ -718,6 +718,37 @@ def run_standardized_model_workflow(
     print(f"Total Hessian flips applied: {len(selected_flips_hess)}")
 
 
+def qwen() -> None:
+    model_name = "Qwen/Qwen1.5-MoE-A2.7B"
+    print(f"\nLoading tokenizer from {model_name}...")
+    start_tok = time.time()
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    print(f"Tokenizer loaded in {time.time() - start_tok:.2f}s")
+
+    print(f"Loading model from {model_name}...")
+    start_model = time.time()
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        device_map="auto",
+        dtype=torch.bfloat16,
+        trust_remote_code=True,
+        low_cpu_mem_usage=True,
+    )
+    print(f"Model loaded in {time.time() - start_model:.2f}s")
+
+    gate_weights = [model.model.layers[i].mlp.gate.weight for i in range(len(model.model.layers))]
+    run_standardized_model_workflow(
+        model,
+        tokenizer,
+        gate_weights,
+        probe_question="In one sentence, what is the capital of France?",
+        num_grad_samples=int(os.getenv("NUM_GRAD_SAMPLES", "1")),
+        p=20,
+        n=10,
+        grad_csv_path="bitflip_metadata.csv",
+        hess_csv_path="bitflip_metadata_hess.csv",
+    )
+
 def olmoe() -> None:
     model_name = "allenai/OLMoE-1B-7B-0125"
     print(f"\nLoading tokenizer from {model_name}...")
