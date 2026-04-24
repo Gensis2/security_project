@@ -35,21 +35,11 @@ def _bitpos_to_field(bit_pos: int) -> tuple[str, int]:
     return "mantissa", bit_pos
 
 
-def _eval_lm_loss_and_token_acc(model, inputs, compute_accuracy: bool) -> tuple[float, float | None]:
+def _eval_lm_loss(model, inputs) -> float:
     with torch.no_grad():
         outputs = model(**inputs, labels=inputs["input_ids"])
         loss_val = float(outputs.loss.detach().cpu().item())
-        if not compute_accuracy:
-            return loss_val, None
-
-        logits = outputs.logits
-        labels = inputs["input_ids"]
-
-        # HuggingFace CausalLM loss is computed on shifted tokens.
-        preds = logits[:, :-1, :].argmax(dim=-1)
-        targets = labels[:, 1:]
-        token_acc = float((preds == targets).float().mean().detach().cpu().item())
-        return loss_val, token_acc
+        return loss_val
 
 
 def _top_p_vulnerable_bits_bf16(
@@ -115,7 +105,6 @@ def gate_grad_bit_rank(
     *,
     p: int,
     n: int,
-    compute_accuracy: bool = True,
     page_size_bytes: int = 4096,
 ):
     """Gradient-based bit ranking (GBR) for bf16 gate weights.
@@ -123,8 +112,8 @@ def gate_grad_bit_rank(
     Iteration loop:
       1) forward+backward to get gradients at current (already-flipped) weights
       2) for each layer, select top-p vulnerable bits using |g * Δw|
-      3) evaluate each of the p×l candidates by temporarily flipping and measuring loss/accuracy
-      4) permanently apply the flip that maximizes accuracy drop (tie-breaker: loss increase)
+      3) evaluate each of the p×l candidates by temporarily flipping and measuring loss
+      4) permanently apply the flip that maximizes loss increase
 
     Returns:
       selected_flips: list of chosen flips (length n)
@@ -141,13 +130,6 @@ def gate_grad_bit_rank(
         outputs = model(**inputs, labels=inputs["input_ids"])
         base_loss_t = outputs.loss
         base_loss = float(base_loss_t.detach().cpu().item())
-        base_acc = None
-        if compute_accuracy:
-            logits = outputs.logits
-            labels = inputs["input_ids"]
-            preds = logits[:, :-1, :].argmax(dim=-1)
-            targets = labels[:, 1:]
-            base_acc = float((preds == targets).float().mean().detach().cpu().item())
         base_loss_t.backward()
 
         # 1) Build p×l candidate set.
@@ -176,7 +158,6 @@ def gate_grad_bit_rank(
             w = gate_weights[layer_idx]
             device = w.device
             masks = _bf16_bit_masks(device)
-            mask_i16 = masks[bit_pos]
 
             w_i16 = w.view(torch.int16).view(-1)
             original_i16 = int(w_i16[flat_idx].item())
@@ -187,21 +168,16 @@ def gate_grad_bit_rank(
 
             # Temporarily flip.
             with torch.no_grad():
-                w_i16[flat_idx] = w_i16[flat_idx] ^ mask_i16
-                cand_loss, cand_acc = _eval_lm_loss_and_token_acc(model, inputs, compute_accuracy)
+                w_i16[flat_idx] = torch.tensor(flipped_u16, dtype=torch.uint16, device=device).view(torch.int16)
+                cand_loss = _eval_lm_loss(model, inputs)
                 # Restore.
                 w_i16[flat_idx] = torch.tensor(original_i16, dtype=torch.int16, device=device)
 
             # Handle NaNs robustly.
             if cand_loss != cand_loss:  # NaN
                 cand_loss = float("inf")
-            if cand_acc is not None and cand_acc != cand_acc:
-                cand_acc = 0.0
 
             loss_increase = cand_loss - base_loss
-            acc_drop = None
-            if base_acc is not None and cand_acc is not None:
-                acc_drop = base_acc - cand_acc
 
             field, field_bit = _bitpos_to_field(bit_pos)
             byte_offset = int(flat_idx) * 2
@@ -224,32 +200,20 @@ def gate_grad_bit_rank(
                 "page_num": page_num,
                 "page_offset": page_off,
                 "base_loss": float(base_loss),
-                "base_acc": None if base_acc is None else float(base_acc),
                 "cand_loss": float(cand_loss),
-                "cand_acc": None if cand_acc is None else float(cand_acc),
                 "loss_increase": float(loss_increase),
-                "acc_drop": None if acc_drop is None else float(acc_drop),
             }
             ranking.append(item)
 
             if best is None:
                 best = item
             else:
-                # Primary: maximize accuracy drop. Fallback: maximize loss increase.
-                best_acc_drop = best["acc_drop"]
-                item_acc_drop = item["acc_drop"]
-                if best_acc_drop is None or item_acc_drop is None:
-                    if item["loss_increase"] > best["loss_increase"]:
-                        best = item
-                else:
-                    if (item_acc_drop, item["loss_increase"]) > (best_acc_drop, best["loss_increase"]):
-                        best = item
+                # Maximize loss increase.
+                if item["loss_increase"] > best["loss_increase"]:
+                    best = item
 
-        # Sort full candidate ranking for this iteration (paper stores this).
-        if compute_accuracy:
-            ranking.sort(key=lambda d: ((d["acc_drop"] if d["acc_drop"] is not None else float("-inf")), d["loss_increase"]), reverse=True)
-        else:
-            ranking.sort(key=lambda d: d["loss_increase"], reverse=True)
+        # Sort full candidate ranking for this iteration by loss increase.
+        ranking.sort(key=lambda d: d["loss_increase"], reverse=True)
         per_iter_rankings.append(ranking)
 
         if best is None:
@@ -258,11 +222,11 @@ def gate_grad_bit_rank(
         # 3) Permanently apply the best flip for this iteration.
         w = gate_weights[best["layer_idx"]]
         device = w.device
-        masks = _bf16_bit_masks(device)
-        mask_i16 = masks[best["bit_pos"]]
         with torch.no_grad():
             w_i16 = w.view(torch.int16).view(-1)
-            w_i16[best["flat_idx"]] = w_i16[best["flat_idx"]] ^ mask_i16
+            original_i16 = int(w_i16[best["flat_idx"]].item())
+            flipped_u16 = (original_i16 & 0xFFFF) ^ (1 << best["bit_pos"])
+            w_i16[best["flat_idx"]] = torch.tensor(flipped_u16, dtype=torch.uint16, device=device).view(torch.int16)
 
         flipped_set.add((best["layer_idx"], best["flat_idx"], best["bit_pos"]))
         selected_flips.append(best)
@@ -297,7 +261,7 @@ print(f"Initial loss: {loss.item()}")
 
 gate_weights = [gate.weight for gate in gates]
 
-selected_flips, per_iter_rankings = gate_grad_bit_rank(model, inputs, gate_weights, p=10, n=10, compute_accuracy=True)
+selected_flips, per_iter_rankings = gate_grad_bit_rank(model, inputs, gate_weights, p=10, n=10)
 
 with torch.no_grad():
     outputs = model(**inputs, labels=inputs["input_ids"])
