@@ -289,7 +289,7 @@ start_model = time.time()
 model = AutoModelForCausalLM.from_pretrained(
     model_name,
     device_map="auto",
-    torch_dtype=torch.bfloat16,
+    dtype=torch.bfloat16,
     trust_remote_code=True,
     low_cpu_mem_usage=True,
 )
