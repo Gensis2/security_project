@@ -22,11 +22,11 @@ def gate_grad_bit_rank(model, inputs, gate_weights, gate_grads, p, n):
 
     for _ in tqdm(range(n), desc="Bit flip iterations"):
         all_scores = []
-        for layer_idx, (weights, grads) in enumerate(tqdm(zip(gate_weights, gate_grads), total=len(gate_weights), desc="Processing layers")):
+        for layer_idx, (weights, grads) in enumerate(tqdm(zip(gate_weights, gate_grads), total=len(gate_weights), desc="Processing layers", leave=False)):
             M, N = weights.shape
             layer_scores = []
 
-            for i in tqdm(range(M), desc="M"):
+            for i in tqdm(range(M), desc="M", leave=False):
                 for j in tqdm(range(N), desc="N", leave=False):
                     
                     w = weights[i, j]
