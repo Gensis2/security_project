@@ -782,4 +782,4 @@ def olmoe() -> None:
 
 
 if __name__ == "__main__":
-    olmoe()
+    qwen()
