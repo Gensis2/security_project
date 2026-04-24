@@ -791,7 +791,7 @@ def _run_model_workflow(model_name: str) -> None:
         gate_weights,
         probe_question="In one sentence, what is the capital of France?",
         num_grad_samples=int(os.getenv("NUM_GRAD_SAMPLES", "1")),
-        p=20,
+        p=5,
         n=10,
         page_size_bytes=4096,
         grad_csv_path="bitflip_metadata.csv",
