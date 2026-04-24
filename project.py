@@ -60,6 +60,16 @@ def _eval_lm_loss(model, inputs) -> float:
         return float(loss_val.detach().cpu().item())
 
 
+def _eval_avg_lm_loss(model, inputs_list: list[dict[str, torch.Tensor]]) -> float:
+    if not inputs_list:
+        raise ValueError("inputs_list must contain at least one sample")
+    with torch.no_grad():
+        total = 0.0
+        for sample_inputs in inputs_list:
+            total += float(_forward_lm_loss_fp32(model, sample_inputs).detach().cpu().item())
+    return total / float(len(inputs_list))
+
+
 def _forward_lm_loss_fp32(model, inputs) -> torch.Tensor:
     """Compute CausalLM loss in float32 for numerical stability."""
     outputs = model(**inputs)
@@ -156,7 +166,7 @@ def _top_p_vulnerable_bits_bf16(
 
 def gate_grad_bit_rank(
     model,
-    inputs,
+    inputs_list: list[dict[str, torch.Tensor]],
     gate_weights: list[torch.Tensor],
     *,
     p: int,
@@ -181,11 +191,20 @@ def gate_grad_bit_rank(
     selected_flips: list[dict] = []
     per_iter_rankings: list[list[dict]] = []
 
+    if not inputs_list:
+        raise ValueError("inputs_list must contain at least one sample")
+
+    num_samples = len(inputs_list)
+
     for it in tqdm(range(n), desc="GBR iterations"):
         model.zero_grad(set_to_none=True)
-        base_loss_t = _forward_lm_loss_fp32(model, inputs)
-        base_loss = float(base_loss_t.detach().cpu().item())
-        base_loss_t.backward()
+        base_loss_vals = []
+        for sample_inputs in inputs_list:
+            sample_loss_t = _forward_lm_loss_fp32(model, sample_inputs)
+            base_loss_vals.append(float(sample_loss_t.detach().cpu().item()))
+            # Average gradients over samples.
+            (sample_loss_t / float(num_samples)).backward()
+        base_loss = sum(base_loss_vals) / float(num_samples)
 
         # 1) Build p×l candidate set.
         candidates: list[tuple[float, int, int, int]] = []
@@ -224,7 +243,7 @@ def gate_grad_bit_rank(
             # Temporarily flip.
             with torch.no_grad():
                 w_i16[flat_idx] = torch.tensor(flipped_u16, dtype=torch.uint16, device=device).view(torch.int16)
-                cand_loss = _eval_lm_loss(model, inputs)
+                cand_loss = _eval_avg_lm_loss(model, inputs_list)
                 # Restore.
                 w_i16[flat_idx] = torch.tensor(original_i16, dtype=torch.int16, device=device)
 
@@ -287,11 +306,197 @@ def gate_grad_bit_rank(
             flipped_u16 = (original_i16 & 0xFFFF) ^ (1 << best["bit_pos"])
             w_i16[best["flat_idx"]] = torch.tensor(flipped_u16, dtype=torch.uint16, device=device).view(torch.int16)
 
-        iter_loss_after_flip = _eval_lm_loss(model, inputs)
+        iter_loss_after_flip = _eval_avg_lm_loss(model, inputs_list)
         print(
             f"[GBR] iter={it} layer={best['layer_idx']} flat_idx={best['flat_idx']} "
             f"bit_pos={best['bit_pos']} bit_gradient={best['bit_gradient']:.6f} "
-            f"loss_after_flip={iter_loss_after_flip:.6f}"
+            f"avg_loss_after_flip={iter_loss_after_flip:.6f}"
+        )
+
+        flipped_set.add((best["layer_idx"], best["flat_idx"], best["bit_pos"]))
+        selected_flips.append(best)
+
+    return selected_flips, per_iter_rankings
+
+
+def gate_hess_bit_rank(
+    model,
+    inputs_list: list[dict[str, torch.Tensor]],
+    gate_weights: list[torch.Tensor],
+    *,
+    p: int,
+    n: int,
+    page_size_bytes: int = 4096,
+    hessian_eps: float = 1e-3,
+):
+    """Hessian-informed bit ranking for bf16 gate weights (unused helper).
+
+    This mirrors gate_grad_bit_rank but ranks candidates by a second-order Taylor
+    approximation for each bit flip:
+
+        Delta L ~= g * Delta w + 0.5 * h_diag * (Delta w^2)
+
+    where h_diag is a finite-difference estimate of the diagonal Hessian entry
+    at the candidate weight coordinate.
+    """
+    model.eval()
+
+    if not inputs_list:
+        raise ValueError("inputs_list must contain at least one sample")
+    if hessian_eps <= 0:
+        raise ValueError("hessian_eps must be > 0")
+
+    num_samples = len(inputs_list)
+    flipped_set: set[tuple[int, int, int]] = set()  # (layer_idx, flat_idx, bit_pos)
+    selected_flips: list[dict] = []
+    per_iter_rankings: list[list[dict]] = []
+
+    def _avg_grad_at_coord(target_weight: torch.Tensor, flat_idx: int) -> float:
+        model.zero_grad(set_to_none=True)
+        for sample_inputs in inputs_list:
+            loss_t = _forward_lm_loss_fp32(model, sample_inputs)
+            (loss_t / float(num_samples)).backward()
+        grad_t = target_weight.grad
+        if grad_t is None:
+            return 0.0
+        return float(grad_t.view(-1)[flat_idx].detach().cpu().item())
+
+    for it in tqdm(range(n), desc="Hessian GBR iterations"):
+        model.zero_grad(set_to_none=True)
+        base_loss_vals = []
+        for sample_inputs in inputs_list:
+            sample_loss_t = _forward_lm_loss_fp32(model, sample_inputs)
+            base_loss_vals.append(float(sample_loss_t.detach().cpu().item()))
+            (sample_loss_t / float(num_samples)).backward()
+        base_loss = sum(base_loss_vals) / float(num_samples)
+
+        # Snapshot base gradients since finite-difference Hessian probes will recompute grads.
+        base_grads = [
+            (w.grad.detach().clone() if w.grad is not None else torch.zeros_like(w))
+            for w in gate_weights
+        ]
+
+        # Build p*l candidate set from first-order screening (same as gradient method).
+        candidates: list[tuple[float, int, int, int]] = []
+        for layer_idx, w in enumerate(gate_weights):
+            candidates.extend(
+                _top_p_vulnerable_bits_bf16(
+                    w,
+                    base_grads[layer_idx],
+                    int(p),
+                    layer_idx=layer_idx,
+                    flipped_set=flipped_set,
+                )
+            )
+
+        ranking: list[dict] = []
+        best = None
+
+        for score_est, layer_idx, flat_idx, bit_pos in tqdm(
+            candidates,
+            desc=f"Eval Hess candidates (iter {it})",
+            leave=False,
+        ):
+            w = gate_weights[layer_idx]
+            device = w.device
+
+            w_i16 = w.view(torch.int16).view(-1)
+            w_flat = w.view(-1)
+
+            original_i16 = int(w_i16[flat_idx].item())
+            original_u16 = original_i16 & 0xFFFF
+            flipped_u16 = original_u16 ^ (1 << bit_pos)
+
+            original_val = float(w_flat[flat_idx].detach().float().item())
+            flipped_val_t = torch.tensor([flipped_u16], dtype=torch.uint16, device=device).view(torch.int16).view(torch.bfloat16)
+            flipped_val = float(flipped_val_t[0].float().item())
+            delta_w = flipped_val - original_val
+
+            g_ij = float(base_grads[layer_idx].view(-1)[flat_idx].detach().cpu().item())
+
+            # Finite-difference diagonal Hessian estimate at this coordinate.
+            eps = float(hessian_eps * max(1.0, abs(original_val)))
+            with torch.no_grad():
+                w_flat[flat_idx] = torch.tensor(original_val + eps, dtype=w.dtype, device=device)
+            g_plus = _avg_grad_at_coord(w, flat_idx)
+
+            with torch.no_grad():
+                w_flat[flat_idx] = torch.tensor(original_val - eps, dtype=w.dtype, device=device)
+            g_minus = _avg_grad_at_coord(w, flat_idx)
+
+            h_ii = (g_plus - g_minus) / (2.0 * eps)
+            second_order_score = (g_ij * delta_w) + (0.5 * h_ii * (delta_w ** 2))
+
+            # Evaluate true average loss change for reporting/debugging.
+            with torch.no_grad():
+                w_i16[flat_idx] = torch.tensor(flipped_u16, dtype=torch.uint16, device=device).view(torch.int16)
+                cand_loss = _eval_avg_lm_loss(model, inputs_list)
+                # Always restore exact original bits.
+                w_i16[flat_idx] = torch.tensor(original_i16, dtype=torch.int16, device=device)
+
+            if cand_loss != cand_loss:  # NaN
+                cand_loss = float("inf")
+
+            field, field_bit = _bitpos_to_field(bit_pos)
+            byte_offset = int(flat_idx) * 2
+            page_num = int(byte_offset // page_size_bytes)
+            page_off = int(byte_offset % page_size_bytes)
+
+            item = {
+                "iter": int(it),
+                "layer_idx": int(layer_idx),
+                "flat_idx": int(flat_idx),
+                "bit_pos": int(bit_pos),
+                "field": field,
+                "field_bit": int(field_bit),
+                "score_est": float(score_est),
+                "original_u16": int(original_u16),
+                "flipped_u16": int(flipped_u16),
+                "byte_offset": byte_offset,
+                "page_num": page_num,
+                "page_offset": page_off,
+                "base_loss": float(base_loss),
+                "cand_loss": float(cand_loss),
+                "loss_after_flip": float(cand_loss),
+                "loss_before": float(base_loss),
+                "bit_gradient": float(cand_loss - base_loss),
+                "g_ij": float(g_ij),
+                "h_ii": float(h_ii),
+                "delta_w": float(delta_w),
+                "second_order_score": float(second_order_score),
+            }
+            ranking.append(item)
+
+            if best is None or item["second_order_score"] > best["second_order_score"]:
+                best = item
+
+            # Restore baseline gradients for subsequent first-order screening assumptions.
+            for gw, bg in zip(gate_weights, base_grads):
+                if gw.grad is None:
+                    gw.grad = bg.clone()
+                else:
+                    gw.grad.copy_(bg)
+
+        ranking.sort(key=lambda d: d["second_order_score"], reverse=True)
+        per_iter_rankings.append(ranking)
+
+        if best is None:
+            break
+
+        # Permanently apply one best bit flip for this iteration.
+        w = gate_weights[best["layer_idx"]]
+        device = w.device
+        with torch.no_grad():
+            w_i16 = w.view(torch.int16).view(-1)
+            original_i16 = int(w_i16[best["flat_idx"]].item())
+            flipped_u16 = (original_i16 & 0xFFFF) ^ (1 << best["bit_pos"])
+            w_i16[best["flat_idx"]] = torch.tensor(flipped_u16, dtype=torch.uint16, device=device).view(torch.int16)
+
+        iter_loss_after_flip = _eval_avg_lm_loss(model, inputs_list)
+        print(
+            f"[HESS-GBR] iter={it} layer={best['layer_idx']} flat_idx={best['flat_idx']} "
+            f"bit_pos={best['bit_pos']} hess_score={best['second_order_score']:.6f} "
+            f"avg_loss_after_flip={iter_loss_after_flip:.6f}"
         )
 
         flipped_set.add((best["layer_idx"], best["flat_idx"], best["bit_pos"]))
@@ -322,33 +527,39 @@ probe_question = "In one sentence, what is the capital of France?"
 print(f"\n[Probe] Question: {probe_question}")
 answer_before = _ask_model(model, tokenizer, probe_question)
 print(f"[Probe] Before flips: {answer_before}")
-print("\nLoading dataset and finding a non-empty text sample...")
+num_grad_samples = int(os.getenv("NUM_GRAD_SAMPLES", "1"))
+if num_grad_samples < 1:
+    raise ValueError("NUM_GRAD_SAMPLES must be >= 1")
+
+print(f"\nLoading dataset and collecting {num_grad_samples} non-empty text sample(s)...")
 dataset = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
-text = None
+texts = []
 for sample in dataset:
     if sample["text"] and sample["text"].strip():
-        text = sample["text"]
-        break
-if text is None:
+        texts.append(sample["text"])
+        if len(texts) >= num_grad_samples:
+            break
+if not texts:
     raise ValueError("No valid non-empty text found in dataset.")
 
-inputs = tokenizer(text, return_tensors="pt").to(model.device)
+inputs_list = [tokenizer(t, return_tensors="pt").to(model.device) for t in texts]
+inputs_probe = inputs_list[0]
 
 gates = [model.model.layers[i].mlp.gate for i in range(len(model.model.layers))]
 for gate in gates:
     gate.weight.requires_grad_(True)
 
-initial_loss = _eval_lm_loss(model, inputs)
-print(f"Initial loss: {initial_loss}")
+initial_loss = _eval_avg_lm_loss(model, inputs_list)
+print(f"Initial average loss ({len(inputs_list)} sample(s)): {initial_loss}")
 
 gate_weights = [gate.weight for gate in gates]
 
-selected_flips, per_iter_rankings = gate_grad_bit_rank(model, inputs, gate_weights, p=20, n=10)
+selected_flips, per_iter_rankings = gate_grad_bit_rank(model, inputs_list, gate_weights, p=20, n=10)
 
 answer_after = _ask_model(model, tokenizer, probe_question)
 print(f"[Probe] After flips: {answer_after}")
 
-final_loss = _eval_lm_loss(model, inputs)
-print(f"Final loss after bit flips: {final_loss}")
+final_loss = _eval_avg_lm_loss(model, inputs_list)
+print(f"Final average loss after bit flips: {final_loss}")
 
 print(f"Total flips applied: {len(selected_flips)}")
