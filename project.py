@@ -737,39 +737,39 @@ def run_standardized_model_workflow(
     model.zero_grad(set_to_none=True)
     original_gate_weights = [w.detach().clone() for w in gate_weights]
 
-    print(f"\n[Probe] Question: {probe_question}")
-    answer_before = _ask_model(model, tokenizer, probe_question)
-    print(f"[Probe] Before flips: {answer_before}")
+    # print(f"\n[Probe] Question: {probe_question}")
+    # answer_before = _ask_model(model, tokenizer, probe_question)
+    # print(f"[Probe] Before flips: {answer_before}")
 
-    print(f"\nLoading dataset and collecting {num_grad_samples} non-empty text sample(s)...")
-    inputs_list = _collect_inputs_list(tokenizer, num_grad_samples, model.device)
+    # print(f"\nLoading dataset and collecting {num_grad_samples} non-empty text sample(s)...")
+    # inputs_list = _collect_inputs_list(tokenizer, num_grad_samples, model.device)
 
-    for gate in [model.model.layers[i].mlp.gate for i in range(len(model.model.layers))]:
-        gate.weight.requires_grad_(True)
+    # for gate in [model.model.layers[i].mlp.gate for i in range(len(model.model.layers))]:
+    #     gate.weight.requires_grad_(True)
 
-    initial_loss = _eval_avg_lm_loss(model, inputs_list)
-    print(f"Initial average loss ({len(inputs_list)} sample(s)): {initial_loss}")
+    # initial_loss = _eval_avg_lm_loss(model, inputs_list)
+    # print(f"Initial average loss ({len(inputs_list)} sample(s)): {initial_loss}")
 
-    selected_flips, _ = gate_grad_bit_rank(
-        model,
-        tokenizer,
-        probe_question,
-        inputs_list,
-        gate_weights,
-        p=p,
-        n=n,
-        page_size_bytes=page_size_bytes,
-        csv_path=grad_csv_path,
-        flippable_sample_rate=flippable_sample_rate,
-        allow_non_finite_flips=allow_non_finite_flips,
-    )
+    # selected_flips, _ = gate_grad_bit_rank(
+    #     model,
+    #     tokenizer,
+    #     probe_question,
+    #     inputs_list,
+    #     gate_weights,
+    #     p=p,
+    #     n=n,
+    #     page_size_bytes=page_size_bytes,
+    #     csv_path=grad_csv_path,
+    #     flippable_sample_rate=flippable_sample_rate,
+    #     allow_non_finite_flips=allow_non_finite_flips,
+    # )
 
-    answer_after = _ask_model(model, tokenizer, probe_question)
-    print(f"[Probe] After flips: {answer_after}")
+    # answer_after = _ask_model(model, tokenizer, probe_question)
+    # print(f"[Probe] After flips: {answer_after}")
 
-    final_loss = _eval_avg_lm_loss(model, inputs_list)
-    print(f"Final average loss after bit flips: {final_loss}")
-    print(f"Total flips applied: {len(selected_flips)}")
+    # final_loss = _eval_avg_lm_loss(model, inputs_list)
+    # print(f"Final average loss after bit flips: {final_loss}")
+    # print(f"Total flips applied: {len(selected_flips)}")
 
     # Restore pre-GBR gate weights so Hessian rerun starts from a clean baseline.
     with torch.no_grad():
