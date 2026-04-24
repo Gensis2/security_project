@@ -647,82 +647,108 @@ def gate_hess_bit_rank(
     return selected_flips, per_iter_rankings
 
 
-model_name = "allenai/OLMoE-1B-7B-0125"
-print(f"\nLoading tokenizer from {model_name}...")
-start_tok = time.time()
-tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-print(f"Tokenizer loaded in {time.time() - start_tok:.2f}s")
-
-print(f"Loading model from {model_name}...")
-start_model = time.time()
-model = AutoModelForCausalLM.from_pretrained(
-    model_name,
-    device_map="auto",
-    dtype=torch.bfloat16,
-    trust_remote_code=True,
-    low_cpu_mem_usage=True,
-)
-print(f"Model loaded in {time.time() - start_model:.2f}s")
-model.zero_grad(set_to_none=True)
-
-probe_question = "In one sentence, what is the capital of France?"
-print(f"\n[Probe] Question: {probe_question}")
-answer_before = _ask_model(model, tokenizer, probe_question)
-print(f"[Probe] Before flips: {answer_before}")
-num_grad_samples = int(os.getenv("NUM_GRAD_SAMPLES", "1"))
-if num_grad_samples < 1:
-    raise ValueError("NUM_GRAD_SAMPLES must be >= 1")
-
-print(f"\nLoading dataset and collecting {num_grad_samples} non-empty text sample(s)...")
-inputs_list = _collect_inputs_list(tokenizer, num_grad_samples, model.device)
-
-gates = [model.model.layers[i].mlp.gate for i in range(len(model.model.layers))]
-for gate in gates:
-    gate.weight.requires_grad_(True)
-
-initial_loss = _eval_avg_lm_loss(model, inputs_list)
-print(f"Initial average loss ({len(inputs_list)} sample(s)): {initial_loss}")
-
-gate_weights = [gate.weight for gate in gates]
-selected_flips, per_iter_rankings = gate_grad_bit_rank(
+def run_standardized_model_workflow(
     model,
     tokenizer,
-    probe_question,
-    inputs_list,
-    gate_weights,
-    p=20,
-    n=10,
-)
+    gate_weights: list[torch.Tensor],
+    *,
+    probe_question: str,
+    num_grad_samples: int,
+    p: int,
+    n: int,
+    grad_csv_path: str = "bitflip_metadata.csv",
+    hess_csv_path: str = "bitflip_metadata_hess.csv",
+) -> None:
+    model.zero_grad(set_to_none=True)
 
-answer_after = _ask_model(model, tokenizer, probe_question)
-print(f"[Probe] After flips: {answer_after}")
+    print(f"\n[Probe] Question: {probe_question}")
+    answer_before = _ask_model(model, tokenizer, probe_question)
+    print(f"[Probe] Before flips: {answer_before}")
 
-final_loss = _eval_avg_lm_loss(model, inputs_list)
-print(f"Final average loss after bit flips: {final_loss}")
+    print(f"\nLoading dataset and collecting {num_grad_samples} non-empty text sample(s)...")
+    inputs_list = _collect_inputs_list(tokenizer, num_grad_samples, model.device)
 
-print(f"Total flips applied: {len(selected_flips)}")
+    for gate in [model.model.layers[i].mlp.gate for i in range(len(model.model.layers))]:
+        gate.weight.requires_grad_(True)
 
-model.zero_grad(set_to_none=True)
+    initial_loss = _eval_avg_lm_loss(model, inputs_list)
+    print(f"Initial average loss ({len(inputs_list)} sample(s)): {initial_loss}")
 
-print("\nStarting second rerun with Hessian ranking...")
-inputs_list_hess = _collect_inputs_list(tokenizer, num_grad_samples, model.device)
-initial_hess_loss = _eval_avg_lm_loss(model, inputs_list_hess)
-print(f"Initial Hessian average loss ({len(inputs_list_hess)} sample(s)): {initial_hess_loss}")
+    selected_flips, _ = gate_grad_bit_rank(
+        model,
+        tokenizer,
+        probe_question,
+        inputs_list,
+        gate_weights,
+        p=p,
+        n=n,
+        csv_path=grad_csv_path,
+    )
 
-selected_flips_hess, per_iter_rankings_hess = gate_hess_bit_rank(
-    model,
-    tokenizer,
-    probe_question,
-    inputs_list_hess,
-    gate_weights,
-    p=20,
-    n=10,
-    csv_path="bitflip_metadata_hess.csv",
-)
+    answer_after = _ask_model(model, tokenizer, probe_question)
+    print(f"[Probe] After flips: {answer_after}")
 
-answer_after_hess = _ask_model(model, tokenizer, probe_question)
-print(f"[Probe] After Hessian flips: {answer_after_hess}")
+    final_loss = _eval_avg_lm_loss(model, inputs_list)
+    print(f"Final average loss after bit flips: {final_loss}")
+    print(f"Total flips applied: {len(selected_flips)}")
 
-final_hess_loss = _eval_avg_lm_loss(model, inputs_list_hess)
-print(f"Final Hessian average loss after bit flips: {final_hess_loss}")
-print(f"Total Hessian flips applied: {len(selected_flips_hess)}")
+    model.zero_grad(set_to_none=True)
+
+    print("\nStarting second rerun with Hessian ranking...")
+    inputs_list_hess = _collect_inputs_list(tokenizer, num_grad_samples, model.device)
+    initial_hess_loss = _eval_avg_lm_loss(model, inputs_list_hess)
+    print(f"Initial Hessian average loss ({len(inputs_list_hess)} sample(s)): {initial_hess_loss}")
+
+    selected_flips_hess, _ = gate_hess_bit_rank(
+        model,
+        tokenizer,
+        probe_question,
+        inputs_list_hess,
+        gate_weights,
+        p=p,
+        n=n,
+        csv_path=hess_csv_path,
+    )
+
+    answer_after_hess = _ask_model(model, tokenizer, probe_question)
+    print(f"[Probe] After Hessian flips: {answer_after_hess}")
+
+    final_hess_loss = _eval_avg_lm_loss(model, inputs_list_hess)
+    print(f"Final Hessian average loss after bit flips: {final_hess_loss}")
+    print(f"Total Hessian flips applied: {len(selected_flips_hess)}")
+
+
+def olmoe() -> None:
+    model_name = "allenai/OLMoE-1B-7B-0125"
+    print(f"\nLoading tokenizer from {model_name}...")
+    start_tok = time.time()
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    print(f"Tokenizer loaded in {time.time() - start_tok:.2f}s")
+
+    print(f"Loading model from {model_name}...")
+    start_model = time.time()
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        device_map="auto",
+        dtype=torch.bfloat16,
+        trust_remote_code=True,
+        low_cpu_mem_usage=True,
+    )
+    print(f"Model loaded in {time.time() - start_model:.2f}s")
+
+    gate_weights = [model.model.layers[i].mlp.gate.weight for i in range(len(model.model.layers))]
+    run_standardized_model_workflow(
+        model,
+        tokenizer,
+        gate_weights,
+        probe_question="In one sentence, what is the capital of France?",
+        num_grad_samples=int(os.getenv("NUM_GRAD_SAMPLES", "1")),
+        p=20,
+        n=10,
+        grad_csv_path="bitflip_metadata.csv",
+        hess_csv_path="bitflip_metadata_hess.csv",
+    )
+
+
+if __name__ == "__main__":
+    olmoe()
