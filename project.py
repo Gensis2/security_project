@@ -4,6 +4,7 @@ import os
 import csv
 import time
 import argparse
+import math
 
 # Disable HuggingFace telemetry and slow lookups
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
@@ -244,6 +245,7 @@ def gate_grad_bit_rank(
     csv_path: str = "bitflip_metadata.csv",
     probe_max_new_tokens: int = 80,
     flippable_sample_rate: float = 1.0,
+    allow_non_finite_flips: bool = False,
 ):
     """Gradient-based bit ranking (GBR) for bf16 gate weights.
 
@@ -352,8 +354,10 @@ def gate_grad_bit_rank(
                 # Restore.
                 w_i16[flat_idx] = torch.tensor(original_i16, dtype=torch.int16, device=device)
 
-            # Handle NaNs robustly.
-            if cand_loss != cand_loss:  # NaN
+            is_finite = math.isfinite(cand_loss)
+            if not is_finite and not allow_non_finite_flips:
+                continue
+            if not is_finite and allow_non_finite_flips:
                 cand_loss = float("inf")
 
             loss_after_flip = cand_loss
@@ -412,6 +416,14 @@ def gate_grad_bit_rank(
             w_i16[best["flat_idx"]] = torch.tensor(flipped_u16, dtype=torch.uint16, device=device).view(torch.int16)
 
         iter_loss_after_flip = _eval_avg_lm_loss(model, inputs_list)
+        if (not math.isfinite(iter_loss_after_flip)) and (not allow_non_finite_flips):
+            # Safety rollback: candidate eval should prevent this, but guard anyway.
+            with torch.no_grad():
+                w_i16 = w.view(torch.int16).view(-1)
+                w_i16[best["flat_idx"]] = torch.tensor(original_i16, dtype=torch.int16, device=device)
+            print(f"[GBR] iter={it} rejected applied flip due to non-finite loss")
+            break
+
         probe_response = _ask_model(model, tokenizer, probe_question, max_new_tokens=probe_max_new_tokens)
         probe_top_tokens = _probe_next_token_stats(model, tokenizer, probe_question, top_k=5)
         print(f"[Probe] iter={it} response: {probe_response}")
@@ -456,6 +468,7 @@ def gate_hess_bit_rank(
     csv_path: str = "bitflip_metadata_hess.csv",
     probe_max_new_tokens: int = 80,
     flippable_sample_rate: float = 1.0,
+    allow_non_finite_flips: bool = False,
 ):
     """Hessian-informed bit ranking for bf16 gate weights (unused helper).
 
@@ -597,7 +610,10 @@ def gate_hess_bit_rank(
                 # Always restore exact original bits.
                 w_i16[flat_idx] = torch.tensor(original_i16, dtype=torch.int16, device=device)
 
-            if cand_loss != cand_loss:  # NaN
+            is_finite = math.isfinite(cand_loss)
+            if not is_finite and not allow_non_finite_flips:
+                continue
+            if not is_finite and allow_non_finite_flips:
                 cand_loss = float("inf")
 
             field, field_bit = _bitpos_to_field(bit_pos)
@@ -656,6 +672,14 @@ def gate_hess_bit_rank(
             w_i16[best["flat_idx"]] = torch.tensor(flipped_u16, dtype=torch.uint16, device=device).view(torch.int16)
 
         iter_loss_after_flip = _eval_avg_lm_loss(model, inputs_list)
+        if (not math.isfinite(iter_loss_after_flip)) and (not allow_non_finite_flips):
+            # Safety rollback: candidate eval should prevent this, but guard anyway.
+            with torch.no_grad():
+                w_i16 = w.view(torch.int16).view(-1)
+                w_i16[best["flat_idx"]] = torch.tensor(original_i16, dtype=torch.int16, device=device)
+            print(f"[HESS-GBR] iter={it} rejected applied flip due to non-finite loss")
+            break
+
         probe_response = _ask_model(model, tokenizer, probe_question, max_new_tokens=probe_max_new_tokens)
         probe_top_tokens = _probe_next_token_stats(model, tokenizer, probe_question, top_k=5)
         print(f"[Probe] iter={it} response: {probe_response}")
@@ -699,8 +723,10 @@ def run_standardized_model_workflow(
     grad_csv_path: str = "bitflip_metadata.csv",
     hess_csv_path: str = "bitflip_metadata_hess.csv",
     flippable_sample_rate: float = 1.0,
+    allow_non_finite_flips: bool = False,
 ) -> None:
     model.zero_grad(set_to_none=True)
+    original_gate_weights = [w.detach().clone() for w in gate_weights]
 
     print(f"\n[Probe] Question: {probe_question}")
     answer_before = _ask_model(model, tokenizer, probe_question)
@@ -726,6 +752,7 @@ def run_standardized_model_workflow(
         page_size_bytes=page_size_bytes,
         csv_path=grad_csv_path,
         flippable_sample_rate=flippable_sample_rate,
+        allow_non_finite_flips=allow_non_finite_flips,
     )
 
     answer_after = _ask_model(model, tokenizer, probe_question)
@@ -734,6 +761,11 @@ def run_standardized_model_workflow(
     final_loss = _eval_avg_lm_loss(model, inputs_list)
     print(f"Final average loss after bit flips: {final_loss}")
     print(f"Total flips applied: {len(selected_flips)}")
+
+    # Restore pre-GBR gate weights so Hessian rerun starts from a clean baseline.
+    with torch.no_grad():
+        for w, w0 in zip(gate_weights, original_gate_weights):
+            w.copy_(w0)
 
     model.zero_grad(set_to_none=True)
 
@@ -753,6 +785,7 @@ def run_standardized_model_workflow(
         page_size_bytes=page_size_bytes,
         csv_path=hess_csv_path,
         flippable_sample_rate=flippable_sample_rate,
+        allow_non_finite_flips=allow_non_finite_flips,
     )
 
     answer_after_hess = _ask_model(model, tokenizer, probe_question)
@@ -784,6 +817,7 @@ def _run_model_workflow(model_name: str) -> None:
     flippable_sample_rate = float(os.getenv("FLIPPABLE_SAMPLE_RATE", "1.0"))
     if not 0.0 < flippable_sample_rate <= 1.0:
         raise ValueError("FLIPPABLE_SAMPLE_RATE must be in the interval (0, 1].")
+    allow_non_finite_flips = os.getenv("ALLOW_NON_FINITE_FLIPS", "0") == "1"
 
     run_standardized_model_workflow(
         model,
@@ -797,6 +831,7 @@ def _run_model_workflow(model_name: str) -> None:
         grad_csv_path="bitflip_metadata.csv",
         hess_csv_path="bitflip_metadata_hess.csv",
         flippable_sample_rate=flippable_sample_rate,
+        allow_non_finite_flips=allow_non_finite_flips,
     )
 
 
