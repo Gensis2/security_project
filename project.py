@@ -66,7 +66,7 @@ def _eval_avg_lm_loss(model, inputs_list: list[dict[str, torch.Tensor]]) -> floa
         raise ValueError("inputs_list must contain at least one sample")
     with torch.no_grad():
         total = 0.0
-        for sample_inputs in tqdm(inputs_list, desc="Evaluating"):
+        for sample_inputs in tqdm(inputs_list, desc="Evaluating", leave=False):
             total += float(_forward_lm_loss_fp32(model, sample_inputs).detach().cpu().item())
     return total / float(len(inputs_list))
 
@@ -269,7 +269,7 @@ def gate_grad_bit_rank(
 
     num_samples = len(inputs_list)
 
-    for it in tqdm(range(n), desc="GBR iterations"):
+    for it in tqdm(range(n), desc="GBR iterations", leave=False):
         model.zero_grad(set_to_none=True)
         base_loss_vals = []
         for sample_inputs in inputs_list:
@@ -486,7 +486,7 @@ def gate_hess_bit_rank(
             return 0.0
         return float(grad_t.view(-1)[flat_idx].detach().cpu().item())
 
-    for it in tqdm(range(n), desc="Hessian GBR iterations"):
+    for it in tqdm(range(n), desc="Hessian GBR iterations", leave=False):
         model.zero_grad(set_to_none=True)
         base_loss_vals = []
         for sample_inputs in inputs_list:
