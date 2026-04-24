@@ -66,7 +66,7 @@ def _eval_avg_lm_loss(model, inputs_list: list[dict[str, torch.Tensor]]) -> floa
         raise ValueError("inputs_list must contain at least one sample")
     with torch.no_grad():
         total = 0.0
-        for sample_inputs in inputs_list:
+        for sample_inputs in tqdm(inputs_list, desc="Evaluating"):
             total += float(_forward_lm_loss_fp32(model, sample_inputs).detach().cpu().item())
     return total / float(len(inputs_list))
 
@@ -672,6 +672,8 @@ final_loss = _eval_avg_lm_loss(model, inputs_list)
 print(f"Final average loss after bit flips: {final_loss}")
 
 print(f"Total flips applied: {len(selected_flips)}")
+
+model.zero_grad(set_to_none=True)
 
 print("\nStarting second rerun with Hessian ranking...")
 inputs_list_hess = _collect_inputs_list(tokenizer, num_grad_samples, model.device)
