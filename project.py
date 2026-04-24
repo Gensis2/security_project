@@ -167,7 +167,7 @@ print(f"Initial loss: {loss.item()}")
 gate_weights = [gate.weight for gate in gates]
 gate_grads = [gate.weight.grad for gate in gates]
 
-flipped_bits = gate_grad_bit_rank(gate_weights, gate_grads, p=24, n=24)
+flipped_bits = gate_grad_bit_rank(model, inputs, gate_weights, gate_grads, p=24, n=24)
 
 with torch.no_grad():
     outputs = model(**inputs, labels=inputs["input_ids"])
