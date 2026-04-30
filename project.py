@@ -720,6 +720,7 @@ def gate_hess_bit_rank(
 
 
 def run_standardized_model_workflow(
+    model_name: str,
     model,
     tokenizer,
     gate_weights: list[torch.Tensor],
@@ -729,8 +730,8 @@ def run_standardized_model_workflow(
     p: int,
     n: int,
     page_size_bytes: int = 4096,
-    grad_csv_path: str = "bitflip_metadata.csv",
-    hess_csv_path: str = "bitflip_metadata_hess.csv",
+    grad_csv_path: str = "model_name_grad.csv",
+    hess_csv_path: str = "model_name_hess.csv",
     flippable_sample_rate: float = 1.0,
     allow_non_finite_flips: bool = False,
 ) -> None:
@@ -829,6 +830,7 @@ def _run_model_workflow(model_name: str) -> None:
     allow_non_finite_flips = os.getenv("ALLOW_NON_FINITE_FLIPS", "0") == "1"
 
     run_standardized_model_workflow(
+        model_name,
         model,
         tokenizer,
         gate_weights,

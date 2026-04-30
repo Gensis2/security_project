@@ -1,0 +1,47 @@
+iter,layer_idx,flat_idx,bit_pos,field,field_bit,score_est,original_u16,flipped_u16,byte_offset,page_num,page_offset,base_loss,cand_loss,loss_after_flip,loss_before,bit_gradient,g_ij,h_ii,delta_w,second_order_score,probe_question,probe_response,probe_top_tokens,probe_loss_after_flip
+0,3,123393,14,exp,7,1.1839653782035626e+36,48653,65037,246786,60,1026,3.670805501937866,5.213878607749939,5.213878607749939,3.670805501937866,1.5430731058120726,-0.0252685546875,3.23486328125,-4.685528685141828e+37,3.550938385443745e+75,"In one sentence, what is the capital of France?","In one sentence, what is the capital of France?
+
+In one sentence, what is the capital of France?
+
+In one sentence, what is the capital of France?
+
+In one sentence, what is the capital of France?
+
+In one sentence, what is the capital of France?
+
+In one sentence, what is the capital of France?",187:\n:0.7229 | 535:\n\n:0.0524 | 50279::0.0408 | 50276:  :0.0110 | 1737: What:0.0080,5.213878607749939
+1,1,4,14,exp,7,inf,48252,64636,8,0,8,5.213878607749939,6.897010087966919,6.897010087966919,5.213878607749939,1.6831314802169803,9.864834688055374e+27,4.679606776629876e+32,-5.233835233403106e+36,6.409430733593039e+105,"In one sentence, what is the capital of France?","The capital of France is a city.
+
+The capital of France is a city.
+
+The capital of France is a city.
+
+The capital of a city is a city.
+
+The capital of a city is a city.
+
+The capital of a country is a city.
+
+The capital is a city.
+
+The capital is a city.",187:\n:0.2977 | 535:\n\n:0.0486 | 380: The:0.0429 | 309: I:0.0244 | 733: It:0.0216,6.897010087966919
+2,14,122947,14,exp,7,6.460515366231959e+36,15597,31981,245894,60,134,6.897010087966919,8.154443359375,8.154443359375,6.897010087966919,1.2574332714080807,-0.65625,66.40625,9.844594843782033e+36,3.2179156442377666e+75,"In one sentence, what is the capital of France?","The capital Next A Natural Ad is a IPhone American
+
+The capital of the is a capital of a a question of the capital Answers to the question of
+
+the capital of the capital is a a
+
+the capital of the capital of a question is a
+
+ the
+
+the capital of the capital of a question is a
+
+the capital of a question is",187:\n:0.2960 | 535:\n\n:0.0514 | 380: The:0.0426 | 1737: What:0.0243 | 309: I:0.0243,8.154443359375
+3,1,2052,14,exp,7,inf,48287,64671,4104,1,8,8.154443359375,9.228272342681885,9.228272342681885,8.154443359375,1.0738289833068855,1.8777074515880648e+31,9.586965506268591e+33,-6.604601604056301e+36,2.0909537199516057e+107,"In one sentence, what is the capital of France?",Ad Copyright Sun Fire When Copyright Copyright Copyright Copyright When When When When when When When When When If When If As As As Winter War Of Of Of A A From Television As A As As A A Snow Birds As As Four Four Four Four A Four Four Four Four A Four Four A A Four Snow Snow A A Four A Four A Four Four A Four Snow A Four Commercial Four A Snow A Writing As,2006: Ad:0.6370 | 8283: Copyright:0.0557 | 329: A:0.0338 | 3837:Ad:0.0091 | 187:\n:0.0075,9.228272342681885
+4,6,38437,14,exp,7,1.6991791469555223e+36,48827,65211,76874,18,3146,9.228272342681885,9.757043361663818,9.757043361663818,9.228272342681885,0.5287710189819332,0.013671875,1.1129080953175569e+33,-1.2428281760588963e+38,8.595110945606062e+108,"In one sentence, what is the capital of France?",Ad Abstract A Equ Abstract A A A A A A A A A A A A A Post A A A A Post A A A A A Post A A Post A A Post A A Post A A A Post A A A Post A A A A A A Post A A A A A A A A Post A A A A Post A A A A Post was A T Flood A Flood A,2006: Ad:0.1461 | 329: A:0.1138 | 187:\n:0.0886 | 1916: To:0.0198 | 535:\n\n:0.0175,9.757043361663818
+5,5,17957,14,exp,7,1.0619869668472015e+36,48750,65134,35914,8,3146,9.757043361663818,9.676108694076538,9.676108694076538,9.757043361663818,-0.08093466758728063,-0.013427734375,2.04408659286802e+34,-7.908906574920249e+37,6.392962910817821e+109,"In one sentence, what is the capital of France?",A A A No A Foreign Abstract AB A Introduction Summary Introduction Introduction Introduction Under Introduction Introduction Looking Taking Dec Looking Looking Looking Taking Taking Living Abstract Running Running Introdu Blind Living Moving Living Living Ad Living Ad Living Ad Living Ad Living As As Living As Ad As Cons As Living As As Living Pl Snow Pl Living Ad As Living Pl Snow As Pl Snow Living As Snow As Snow Pl Snow Snow As Living Ad As Count,329: A:0.5525 | 2006: Ad:0.0847 | 1680: Is:0.0258 | 380: The:0.0178 | 733: It:0.0138,9.676108694076538
+6,4,127268,14,exp,7,2.0376519984212614e+36,48668,65052,254536,62,584,9.676108694076538,11.09639253616333,11.09639253616333,9.676108694076538,1.4202838420867927,-0.039306640625,1.846016186582359e+34,-5.183989183561172e+37,2.480468307545683e+109,"In one sentence, what is the capital of France?",Ad Real Pros T T A D Poor Cross Copyright diver Environmental T AHome EnvironmentalA CommercialCAT Environmental Climate Religious Environmental with Environmental Environmental Rog Flying Super Commercialauercein Environmental Aud Political Climate Commercial Flying Bra Polar Rogole WeeklyFireGerUpAd RogComplexGDSimHardRegSuppPropAdLongLongLongLongLongLongLongLongPoorKeyAbstract RogPoorAACoverGGLivingComLongLong,2006: Ad:0.7120 | 33523: Pros:0.0662 | 46405:Pros:0.0148 | 3837:Ad:0.0139 | 1284: As:0.0115,11.09639253616333
+7,2,0,14,exp,7,inf,48014,64398,0,0,0,11.09639253616333,11.076948833465575,11.076948833465575,11.09639253616333,-0.019443702697754972,6.305757075109906e+27,6.103721392135909e+33,-1.474612307823891e+36,6.636214497175849e+105,"In one sentence, what is the capital of France?","ulaialogRealia, age cover alternativeCover O O O O Keep PallKeepWatchOTOrd BallduleichtStFor HippRealOther( Hipp Hippia O T AdT Hipp Hipp O Hipp O Ad Hipp Hipp Real Hipp HippReal HippLongRealRealLongRealReg OPlLong Hipp",187:\n:0.1017 | 313: (:0.0451 | 1244: And:0.0227 | 3166: Do:0.0188 | 535:\n\n:0.0188,11.076948833465575
+8,0,1,0,mantissa,0,nan,15524,15525,2,0,2,11.076948833465575,11.076948833465575,11.076948833465575,11.076948833465575,0.0,nan,nan,0.0001220703125,nan,"In one sentence, what is the capital of France?","ulaialogRealia, age cover alternativeCover O O O O Keep PallKeepWatchOTOrd BallduleichtStFor HippRealOther( Hipp Hippia O T AdT Hipp Hipp O Hipp O Ad Hipp Hipp Real Hipp HippReal HippLongRealRealLongRealReg OPlLong Hipp",187:\n:0.1017 | 313: (:0.0451 | 1244: And:0.0227 | 3166: Do:0.0188 | 535:\n\n:0.0188,11.076948833465575
+9,0,2049,0,mantissa,0,nan,48260,48261,4098,1,2,11.076948833465575,11.076156044006348,11.076156044006348,11.076948833465575,-0.0007927894592274498,nan,6.135540319708166e+32,-0.0001220703125,nan,"In one sentence, what is the capital of France?","ulaialogRealia, age cover alternativeCover O O O O Keep PallKeepWatchOTOrd BallduleichtStFor HippRealOther( Hipp Hippia O T AdT Hipp Hipp O Hipp O Ad Hipp Hipp Real Hipp HippReal HippLongRealRealLongRealReg OPlLong Hipp",187:\n:0.1017 | 313: (:0.0451 | 1244: And:0.0227 | 3166: Do:0.0188 | 535:\n\n:0.0188,11.076156044006348
