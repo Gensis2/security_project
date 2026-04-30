@@ -17,3 +17,4 @@ module load cuda
 conda activate security_project
 
 python project.py
+python figure.py
