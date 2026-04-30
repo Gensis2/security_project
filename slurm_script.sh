@@ -14,7 +14,7 @@ module load python
 module load anaconda
 module load cuda
 
-conda activate security_project
+conda activate gatehammer
 
 python project.py
 python figure.py
