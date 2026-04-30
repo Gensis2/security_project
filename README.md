@@ -6,7 +6,7 @@ The goal of this project is to simulate and evaluate bit-level perturbations in 
 
 ---
 
-## Requirements
+## ⚙️ Requirements
 
 To run this framework, you must have access to a GPU capable of loading both models and datasets:
 
@@ -18,7 +18,7 @@ Due to model size and memory requirements, CPU-only execution is not supported.
 
 ---
 
-## Environment Setup (Conda)
+## 🧪 Environment Setup (Conda)
 
 We provide an environment.yml file to recreate the exact environment.
 
@@ -38,7 +38,7 @@ If this returns True, your GPU setup is working correctly.
 
 ---
 
-## Running the Simulation
+## 🚀 Running the Simulation
 
 You can run the framework in two ways depending on your system setup.
 
@@ -64,7 +64,7 @@ Make sure your conda environment is activated before running.
 
 ---
 
-## Outputs
+## 📊 Outputs
 
 After running the simulation, the outputs will remain in the base directory, containing a:
 png and pdf output of the perplexity comparison
@@ -74,7 +74,7 @@ These files are also included in the repository so you can immediately inspect e
 There additionally exists a qwen_nonfinite csv, with is from previous runs that did not consider inf/NaN values. It remains as a resource to support removing such values when processing bit-flips.
 ---
 
-## Notes
+## 📌 Notes
 
 - Ensure sufficient GPU memory before running (both models must fit in memory simultaneously, as well as the dataset).
 - Results may vary slightly depending on hardware and CUDA version.
